@@ -1,15 +1,9 @@
-const evaluatePolicy = (riskScore) => {
+import { POLICY_CONFIG } from "../config/policyConfig.js"
 
-    if (riskScore < 0.3) {
-     return "ALLOW"
-    }
-   
-    if (riskScore < 0.7) {
-     return "MFA_REQUIRED"
-    }
-   
-    return "DENY"
-   
-   }
-   
-   export default evaluatePolicy;
+const evaluatePolicy = (riskScore) => {
+  if (riskScore < POLICY_CONFIG.thresholds.allow) return "ALLOW"
+  if (riskScore < POLICY_CONFIG.thresholds.mfa) return "MFA_REQUIRED"
+  return "DENY"
+}
+
+export default evaluatePolicy

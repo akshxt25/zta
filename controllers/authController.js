@@ -57,18 +57,18 @@ export const login = async (req, res) => {
     console.log("Detected Device:", context.device);
     console.log("Trusted Devices:", user.trustedDevices);
 
-    const riskScore = calculateRisk(context, user);
-
-    const decision = evaluatePolicy(riskScore);
+    const { score, reasons } = await calculateRisk(context, user)
+    const decision = evaluatePolicy(score)
 
     await LoginLog.create({
       userId: user._id,
       ip: context.ip,
       location: context.location,
       device: context.device,
-      riskScore,
+      riskScore: score,
       decision,
-    });
+      reasons
+    })
 
     if (decision === "MFA_REQUIRED") {
       const { otp, sessionId } = generateOTP(user._id.toString(), context);

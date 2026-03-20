@@ -19,7 +19,9 @@ const loginLog = new mongoose.Schema({
        timestamp: {
         type: Date,
         default: Date.now
-       }
+       } ,
+
+       reasons: [String]
 })
 
 export const LoginLog = mongoose.model("loginLog" , loginLog);
