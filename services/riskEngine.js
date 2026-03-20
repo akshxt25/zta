@@ -1,35 +1,30 @@
-const calculateRisk = (context, user) => {
+import { locationRisk } from "./risk/locationRisk.js"
+import { deviceRisk } from "./risk/deviceRisk.js"
+import { timeRisk } from "./risk/timeRisk.js"
+import { ipRisk } from "./risk/ipRisk.js"
+import { behaviorRisk } from "./risk/behaviorRisk.js"
+import { LoginLog } from "../models/loginLog.js"
 
-    let risk = 0
-   
-    console.log("---- RISK DEBUG ----")
-   
-    if (context.location && context.location !== "IN") {
-     risk += 0.3
-     console.log("Location risk +0.3")
-    }
-   
-    const isTrustedDevice = user.trustedDevices.includes(context.device)
-   
-    if (!isTrustedDevice) {
-     risk += 0.25
-     console.log("Device risk +0.25")
-    }
-   
-    if (context.loginHour < 3 || context.loginHour > 23) {
-     risk += 0.2
-     console.log("Time risk +0.2")
-    }
-   
-    if (context.ip && context.ip.startsWith("185.")) {
-     risk += 0.5
-     console.log("IP risk +0.25")
-    }
-   
-    console.log("Final Risk:", risk)
-   
-    return risk
-   
-   }
-   
-   export default calculateRisk
+const calculateRisk = async (context, user) => {
+  let total = 0
+  let reasons = []
+
+  const pastLogs = await LoginLog.find({ userId: user._id }).limit(10)
+
+  const checks = [
+    locationRisk(context),
+    deviceRisk(context, user),
+    timeRisk(context),
+    ipRisk(context),
+    behaviorRisk(context, pastLogs)
+  ]
+
+  checks.forEach((c) => {
+    total += c.score
+    if (c.reason) reasons.push(c.reason)
+  })
+
+  return { score: total, reasons }
+}
+
+export default calculateRisk
