@@ -1,148 +1,196 @@
-import { User } from "../models/user.js";
-import { LoginLog } from "../models/loginLog.js";
-import bcrypt from "bcryptjs";
-import { sendOTPEmail } from "../services/emailService.js";
-import collectContext from "../services/contextCollector.js";
-import calculateRisk from "../services/riskEngine.js";
-import evaluatePolicy from "../services/policyEngine.js";
-import { verifyOTP } from "../services/otpService.js";
-import { generateOTP } from "../services/otpService.js";
+import bcrypt from "bcryptjs"
+import { User } from "../models/user.js"
+import { LoginLog } from "../models/loginLog.js"
 
-export const register = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+import collectContext from "../services/contextCollector.js"
+import calculateRisk from "../services/riskEngine.js"
+import evaluatePolicy from "../services/policyEngine.js"
 
-    const existingUser = await User.findOne({ email });
+import { generateOTP, verifyOTP } from "../services/otpService.js"
+import { sendOTPEmail } from "../services/emailService.js"
 
-    if (existingUser) {
-      return res.status(400).json({ message: "User already exists" });
-    }
+import {
+  generateAccessToken,
+  generateRefreshToken
+} from "../utils/tokenService.js"
 
-    const salt = await bcrypt.genSalt(10);
-    const hashedPassword = await bcrypt.hash(password, salt);
+import {
+  storeRefreshToken,
+  deleteRefreshToken,
+  deleteAllUserSessions
+} from "../services/sessionStore.js"
 
-    const user = await User.create({
-      email,
-      password: hashedPassword,
-      trustedDevices: [],
-    });
+import { asyncHandler } from "../utils/asyncHandler.js"
 
-    res.status(201).json({
-      message: "User registered successfully",
-      userId: user._id,
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+// REGISTER
+export const register = asyncHandler(async (req, res) => {
+  const { email, password } = req.body
+
+  const existing = await User.findOne({ email })
+  if (existing) {
+    res.status(400)
+    throw new Error("User already exists")
   }
-};
 
-export const login = async (req, res) => {
-  try {
-    const { email, password } = req.body;
+  const hashed = await bcrypt.hash(password, 10)
 
-    const user = await User.findOne({ email });
+  const user = await User.create({
+    email,
+    password: hashed
+  })
 
-    if (!user) {
-      return res.status(400).json({ message: "User not found" });
-    }
+  res.status(201).json({ userId: user._id })
+})
 
-    const validPassword = await bcrypt.compare(password, user.password);
+// LOGIN
+export const login = asyncHandler(async (req, res) => {
+  const { email, password } = req.body
 
-    if (!validPassword) {
-      return res.status(401).json({ message: "Invalid password" });
-    }
+  const user = await User.findOne({ email })
+  if (!user) {
+    res.status(400)
+    throw new Error("User not found")
+  }
 
-    const context = collectContext(req);
+  const valid = await bcrypt.compare(password, user.password)
+  if (!valid) {
+    res.status(401)
+    throw new Error("Invalid password")
+  }
 
-    console.log("Detected Device:", context.device);
-    console.log("Trusted Devices:", user.trustedDevices);
+  const context = collectContext(req)
 
-    const { score, reasons } = await calculateRisk(context, user)
-    const decision = evaluatePolicy(score)
+  // TRUST DECAY
+  const now = new Date()
+  user.trustedDevices = user.trustedDevices.filter((d) => {
+    const diff =
+      (now - new Date(d.lastUsed)) / (1000 * 60 * 60 * 24)
+    return diff < 30
+  })
+  await user.save()
 
-    await LoginLog.create({
-      userId: user._id,
-      ip: context.ip,
-      location: context.location,
-      device: context.device,
-      riskScore: score,
-      decision,
-      reasons
+  const { score, reasons } = await calculateRisk(context, user)
+  const decision = evaluatePolicy(score)
+
+  await LoginLog.create({
+    userId: user._id,
+    ip: context.ip,
+    location: context.location,
+    device: context.device,
+    riskScore: score,
+    decision,
+    reasons
+  })
+
+  if (decision === "DENY") {
+    res.status(403)
+    throw new Error("Access denied")
+  }
+
+  if (decision === "MFA_REQUIRED") {
+    const { otp, sessionId } = await generateOTP(
+      user._id.toString(),
+      context
+    )
+
+    await sendOTPEmail(user.email, otp)
+
+    return res.json({ decision, sessionId })
+  }
+
+  // TRUST DEVICE
+  const existingDevice = user.trustedDevices.find(
+    (d) => d.deviceId === context.device
+  )
+
+  if (!existingDevice) {
+    user.trustedDevices.push({
+      deviceId: context.device,
+      lastUsed: new Date()
     })
-
-    if (decision === "MFA_REQUIRED") {
-      const { otp, sessionId } = generateOTP(user._id.toString(), context);
-
-      console.log("Generated OTP:", otp);
-
-      await sendOTPEmail(user.email, otp);
-
-      return res.json({
-        decision,
-        message: "OTP required",
-        userId: user._id,
-        sessionId: sessionId,
-      });
-    }
-
-    if (decision === "DENY") {
-      return res.status(403).json({
-        decision,
-        message: "Access denied due to high risk",
-      });
-    }
-
-    if (decision === "ALLOW") {
-      if (!user.trustedDevices.includes(context.device)) {
-        user.trustedDevices.push(context.device);
-        await user.save();
-
-        console.log("Device added to trusted list");
-      }
-
-      return res.json({
-        decision,
-        message: "Login successful",
-        riskScore,
-      });
-    }
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+  } else {
+    existingDevice.lastUsed = new Date()
   }
-};
 
-export const verifyOtpController = async (req, res) => {
-  try {
-    const { sessionId, otp } = req.body;
+  await user.save()
 
-    const result = verifyOTP(sessionId, otp);
+  const accessToken = generateAccessToken(user)
+  const refreshToken = generateRefreshToken(user)
 
-    if (!result.valid) {
-      return res.status(400).json({
-        message: result.message,
-      });
-    }
+  await storeRefreshToken(user._id.toString(), refreshToken)
 
-    const user = await User.findById(result.userId);
+  res.json({ accessToken, refreshToken })
+})
 
-    if (!user) {
-      return res.status(404).json({ message: "User not found" });
-    }
+// VERIFY OTP
+export const verifyOtpController = asyncHandler(async (req, res) => {
+  const { sessionId, otp } = req.body
 
-    const context = result.context;
+  const result = await verifyOTP(sessionId, otp)
 
-    if (!user.trustedDevices.includes(context.device)) {
-      user.trustedDevices.push(context.device);
-      await user.save();
-
-      console.log("Device trusted after MFA:", context.device);
-    }
-
-    res.json({
-      message: "MFA successful",
-      access: "GRANTED",
-    });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
+  if (!result.valid) {
+    res.status(400)
+    throw new Error(result.message)
   }
-};
+
+  const user = await User.findById(result.userId)
+
+  const context = result.context
+
+  const existingDevice = user.trustedDevices.find(
+    (d) => d.deviceId === context.device
+  )
+
+  if (!existingDevice) {
+    user.trustedDevices.push({
+      deviceId: context.device,
+      lastUsed: new Date()
+    })
+  } else {
+    existingDevice.lastUsed = new Date()
+  }
+
+  await user.save()
+
+  const accessToken = generateAccessToken(user)
+  const refreshToken = generateRefreshToken(user)
+
+  await storeRefreshToken(user._id.toString(), refreshToken)
+
+  res.json({ accessToken, refreshToken })
+})
+
+// CHANGE PASSWORD
+export const changePassword = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id)
+
+  const { currentPassword, newPassword } = req.body
+
+  const match = await bcrypt.compare(currentPassword, user.password)
+  if (!match) {
+    res.status(400)
+    throw new Error("Incorrect password")
+  }
+
+  user.password = await bcrypt.hash(newPassword, 10)
+  await user.save()
+
+  await deleteAllUserSessions(user._id.toString())
+
+  res.json({ message: "Password updated, sessions revoked" })
+})
+
+// LOGOUT
+export const logoutController = asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body
+
+  await deleteRefreshToken(refreshToken)
+
+  res.json({ message: "Logged out" })
+})
+
+// LOGOUT ALL
+export const logoutAllDevices = asyncHandler(async (req, res) => {
+  await deleteAllUserSessions(req.user.id)
+  res.json({ message: "Logged out from all devices" })
+})
