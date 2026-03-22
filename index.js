@@ -8,6 +8,7 @@ import connectDB from "./config/db.js"
 import "./config/redis.js"
 
 import authRoutes from "./routes/authroutes.js"
+import adminRoutes from "./routes/adminroutes.js"
 import { errorHandler } from "./middleware/errorMiddleware.js"
 import { blockBlacklistedIP } from "./middleware/ipBlocker.js"
 
@@ -35,6 +36,7 @@ connectDB()
 
 app.use(blockBlacklistedIP)
 app.use("/api/auth", authRoutes)
+app.use("/api/admin", adminRoutes)
 
 app.use((req, res, next) => {
   res.status(404)

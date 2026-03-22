@@ -1,4 +1,6 @@
 import bcrypt from "bcryptjs";
+import jwt from "jsonwebtoken";
+import { JWT_SECRET } from "../config/jwt.js";
 import { User } from "../models/user.js";
 import { LoginLog } from "../models/loginlog.js";
 
@@ -19,6 +21,7 @@ import {
   deleteRefreshToken,
   deleteAllUserSessions,
   refreshTokenBelongsToUser,
+  verifyRefreshToken,
 } from "../services/sessionStore.js";
 
 import { asyncHandler } from "../utils/asyncHandler.js";
@@ -190,4 +193,65 @@ export const logoutController = asyncHandler(async (req, res) => {
 export const logoutAllDevices = asyncHandler(async (req, res) => {
   await deleteAllUserSessions(req.user.id);
   res.json({ message: "Logged out from all devices" });
+});
+
+export const getMe = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user.id).select("email role createdAt");
+  if (!user) {
+    res.status(404);
+    throw new Error("User not found");
+  }
+  res.json({
+    id: user._id,
+    email: user.email,
+    role: user.role,
+    createdAt: user.createdAt,
+  });
+});
+
+export const refreshAccessToken = asyncHandler(async (req, res) => {
+  const { refreshToken } = req.body || {};
+  const userId = await verifyRefreshToken(refreshToken);
+  if (!userId) {
+    res.status(401);
+    throw new Error("Invalid or expired refresh token");
+  }
+
+  try {
+    jwt.verify(refreshToken, JWT_SECRET);
+  } catch {
+    res.status(401);
+    throw new Error("Invalid refresh token");
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    res.status(401);
+    throw new Error("User not found");
+  }
+
+  const accessToken = generateAccessToken(user);
+  res.json({ accessToken });
+});
+
+export const getMyLoginLogs = asyncHandler(async (req, res) => {
+  const limit = Math.min(50, Math.max(1, parseInt(String(req.query.limit || "20"), 10) || 20));
+
+  const logs = await LoginLog.find({ userId: req.user.id })
+    .sort({ timestamp: -1 })
+    .limit(limit)
+    .lean();
+
+  res.json({
+    items: logs.map((log) => ({
+      id: log._id,
+      ip: log.ip,
+      location: log.location,
+      device: log.device,
+      riskScore: log.riskScore,
+      decision: log.decision,
+      reasons: log.reasons,
+      timestamp: log.timestamp,
+    })),
+  });
 });

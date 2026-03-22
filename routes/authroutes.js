@@ -5,7 +5,10 @@ import {
   verifyOtpController,
   changePassword,
   logoutController,
-  logoutAllDevices
+  logoutAllDevices,
+  getMe,
+  refreshAccessToken,
+  getMyLoginLogs
 } from "../controllers/authController.js"
 
 import { verifyToken } from "../middleware/authMiddleware.js"
@@ -15,7 +18,8 @@ import {
   validateLogin,
   validateVerifyOtp,
   validateChangePassword,
-  validateLogout
+  validateLogout,
+  validateRefresh
 } from "../middleware/validateAuth.js"
 
 const router = express.Router()
@@ -23,6 +27,10 @@ const router = express.Router()
 router.post("/register", validateRegister, register)
 router.post("/login", loginLimiter, validateLogin, login)
 router.post("/verify-otp", otpLimiter, validateVerifyOtp, verifyOtpController)
+router.post("/refresh", validateRefresh, refreshAccessToken)
+
+router.get("/me", verifyToken, getMe)
+router.get("/login-logs", verifyToken, getMyLoginLogs)
 
 router.post(
   "/change-password",

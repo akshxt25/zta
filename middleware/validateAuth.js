@@ -60,3 +60,5 @@ export const validateLogout = (req, res, next) => {
   }
   next()
 }
+
+export const validateRefresh = validateLogout

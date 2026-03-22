@@ -1,6 +1,10 @@
-import rateLimit from "express-rate-limit"
+import rateLimit, { ipKeyGenerator } from "express-rate-limit"
 
-const clientKey = (req) => req.ip || req.socket?.remoteAddress || "unknown"
+/** IPv6-safe key for rate limiting (see ERR_ERL_KEY_GEN_IPV6). */
+const clientKey = (req) => {
+  const ip = req.ip || req.socket?.remoteAddress || "127.0.0.1"
+  return ipKeyGenerator(typeof ip === "string" ? ip : String(ip))
+}
 
 export const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,

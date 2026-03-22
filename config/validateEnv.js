@@ -1,6 +1,4 @@
-/**
- * Fail fast on missing/weak secrets. Called from loadEnv.js before other app modules load.
- */
+
 export function validateEnv() {
   const errors = []
 
