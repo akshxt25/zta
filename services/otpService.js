@@ -4,13 +4,18 @@ import redis from "../config/redis.js"
 const OTP_EXPIRY = 300
 const MAX_ATTEMPTS = 5
 
+function hashOtp(otp) {
+  return crypto.createHash("sha256").update(String(otp).trim(), "utf8").digest("hex")
+}
+
 export const generateOTP = async (userId, context) => {
   const otp = crypto.randomInt(100000, 999999).toString()
   const sessionId = crypto.randomUUID()
+  const otpHash = hashOtp(otp)
 
   const data = {
     userId,
-    otp,
+    otpHash,
     context,
     attempts: 0
   }
@@ -43,7 +48,14 @@ export const verifyOTP = async (sessionId, inputOtp) => {
 
   record.attempts += 1
 
-  if (record.otp === inputOtp) {
+  const inputHash = hashOtp(inputOtp)
+  const expected = Buffer.from(record.otpHash, "hex")
+  const actual = Buffer.from(inputHash, "hex")
+
+  if (
+    expected.length === actual.length &&
+    crypto.timingSafeEqual(expected, actual)
+  ) {
     await redis.del(key)
 
     return {

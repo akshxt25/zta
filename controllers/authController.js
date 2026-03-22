@@ -1,76 +1,75 @@
-import bcrypt from "bcryptjs"
-import { User } from "../models/user.js"
-import { LoginLog } from "../models/loginLog.js"
+import bcrypt from "bcryptjs";
+import { User } from "../models/user.js";
+import { LoginLog } from "../models/loginlog.js";
 
-import collectContext from "../services/contextCollector.js"
-import calculateRisk from "../services/riskEngine.js"
-import evaluatePolicy from "../services/policyEngine.js"
+import collectContext from "../services/contextCollector.js";
+import calculateRisk from "../services/riskEngine.js";
+import evaluatePolicy from "../services/policyEngine.js";
 
-import { generateOTP, verifyOTP } from "../services/otpService.js"
-import { sendOTPEmail } from "../services/emailService.js"
+import { generateOTP, verifyOTP } from "../services/otpService.js";
+import { sendOTPEmail } from "../services/emailService.js";
 
 import {
   generateAccessToken,
-  generateRefreshToken
-} from "../utils/tokenService.js"
+  generateRefreshToken,
+} from "../utils/tokenService.js";
 
 import {
   storeRefreshToken,
   deleteRefreshToken,
-  deleteAllUserSessions
-} from "../services/sessionStore.js"
+  deleteAllUserSessions,
+  refreshTokenBelongsToUser,
+} from "../services/sessionStore.js";
 
-import { asyncHandler } from "../utils/asyncHandler.js"
+import { asyncHandler } from "../utils/asyncHandler.js";
 
-// REGISTER
+const AUTH_FAILED = "Invalid email or password";
+
 export const register = asyncHandler(async (req, res) => {
-  const { email, password } = req.body
+  const { email, password } = req.body;
 
-  const existing = await User.findOne({ email })
+  const existing = await User.findOne({ email });
   if (existing) {
-    res.status(400)
-    throw new Error("User already exists")
+    res.status(400);
+    throw new Error("User already exists");
   }
 
-  const hashed = await bcrypt.hash(password, 10)
+  const hashed = await bcrypt.hash(password, 10);
 
   const user = await User.create({
     email,
-    password: hashed
-  })
+    password: hashed,
+  });
 
-  res.status(201).json({ userId: user._id })
-})
+  res.status(201).json({ userId: user._id });
+});
 
-// LOGIN
 export const login = asyncHandler(async (req, res) => {
-  const { email, password } = req.body
+  const { email, password } = req.body;
 
-  const user = await User.findOne({ email })
+  const user = await User.findOne({ email });
   if (!user) {
-    res.status(400)
-    throw new Error("User not found")
+    res.status(401);
+    throw new Error(AUTH_FAILED);
   }
 
-  const valid = await bcrypt.compare(password, user.password)
+  const valid = await bcrypt.compare(password, user.password);
   if (!valid) {
-    res.status(401)
-    throw new Error("Invalid password")
+    res.status(401);
+    throw new Error(AUTH_FAILED);
   }
 
-  const context = collectContext(req)
+  const context = collectContext(req);
 
-  // TRUST DECAY
-  const now = new Date()
+  const now = new Date();
   user.trustedDevices = user.trustedDevices.filter((d) => {
-    const diff =
-      (now - new Date(d.lastUsed)) / (1000 * 60 * 60 * 24)
-    return diff < 30
-  })
-  await user.save()
+    const diff = (now - new Date(d.lastUsed)) / (1000 * 60 * 60 * 24);
+    return diff < 30;
+  });
+  await user.save();
 
-  const { score, reasons } = await calculateRisk(context, user)
-  const decision = evaluatePolicy(score)
+  const { score, reasons } = await calculateRisk(context, user);
+  const decision = evaluatePolicy(score);
 
   await LoginLog.create({
     userId: user._id,
@@ -79,118 +78,116 @@ export const login = asyncHandler(async (req, res) => {
     device: context.device,
     riskScore: score,
     decision,
-    reasons
-  })
+    reasons,
+  });
 
   if (decision === "DENY") {
-    res.status(403)
-    throw new Error("Access denied")
+    res.status(403);
+    throw new Error("Access denied");
   }
 
   if (decision === "MFA_REQUIRED") {
-    const { otp, sessionId } = await generateOTP(
-      user._id.toString(),
-      context
-    )
+    const { otp, sessionId } = await generateOTP(user._id.toString(), context);
 
-    await sendOTPEmail(user.email, otp)
+    await sendOTPEmail(user.email, otp);
 
-    return res.json({ decision, sessionId })
+    return res.json({ decision, sessionId });
   }
 
-  // TRUST DEVICE
   const existingDevice = user.trustedDevices.find(
-    (d) => d.deviceId === context.device
-  )
+    (d) => d.deviceId === context.device,
+  );
 
   if (!existingDevice) {
     user.trustedDevices.push({
       deviceId: context.device,
-      lastUsed: new Date()
-    })
+      lastUsed: new Date(),
+    });
   } else {
-    existingDevice.lastUsed = new Date()
+    existingDevice.lastUsed = new Date();
   }
 
-  await user.save()
+  await user.save();
 
-  const accessToken = generateAccessToken(user)
-  const refreshToken = generateRefreshToken(user)
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
 
-  await storeRefreshToken(user._id.toString(), refreshToken)
+  await storeRefreshToken(user._id.toString(), refreshToken);
 
-  res.json({ accessToken, refreshToken })
-})
+  res.json({ accessToken, refreshToken });
+});
 
-// VERIFY OTP
 export const verifyOtpController = asyncHandler(async (req, res) => {
-  const { sessionId, otp } = req.body
+  const { sessionId, otp } = req.body;
 
-  const result = await verifyOTP(sessionId, otp)
+  const result = await verifyOTP(sessionId, otp);
 
   if (!result.valid) {
-    res.status(400)
-    throw new Error(result.message)
+    res.status(400);
+    throw new Error(result.message);
   }
 
-  const user = await User.findById(result.userId)
+  const user = await User.findById(result.userId);
 
-  const context = result.context
+  const context = result.context;
 
   const existingDevice = user.trustedDevices.find(
-    (d) => d.deviceId === context.device
-  )
+    (d) => d.deviceId === context.device,
+  );
 
   if (!existingDevice) {
     user.trustedDevices.push({
       deviceId: context.device,
-      lastUsed: new Date()
-    })
+      lastUsed: new Date(),
+    });
   } else {
-    existingDevice.lastUsed = new Date()
+    existingDevice.lastUsed = new Date();
   }
 
-  await user.save()
+  await user.save();
 
-  const accessToken = generateAccessToken(user)
-  const refreshToken = generateRefreshToken(user)
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
 
-  await storeRefreshToken(user._id.toString(), refreshToken)
+  await storeRefreshToken(user._id.toString(), refreshToken);
 
-  res.json({ accessToken, refreshToken })
-})
+  res.json({ accessToken, refreshToken });
+});
 
-// CHANGE PASSWORD
 export const changePassword = asyncHandler(async (req, res) => {
-  const user = await User.findById(req.user.id)
+  const user = await User.findById(req.user.id);
 
-  const { currentPassword, newPassword } = req.body
+  const { currentPassword, newPassword } = req.body;
 
-  const match = await bcrypt.compare(currentPassword, user.password)
+  const match = await bcrypt.compare(currentPassword, user.password);
   if (!match) {
-    res.status(400)
-    throw new Error("Incorrect password")
+    res.status(400);
+    throw new Error("Incorrect password");
   }
 
-  user.password = await bcrypt.hash(newPassword, 10)
-  await user.save()
+  user.password = await bcrypt.hash(newPassword, 10);
+  await user.save();
 
-  await deleteAllUserSessions(user._id.toString())
+  await deleteAllUserSessions(user._id.toString());
 
-  res.json({ message: "Password updated, sessions revoked" })
-})
+  res.json({ message: "Password updated, sessions revoked" });
+});
 
-// LOGOUT
 export const logoutController = asyncHandler(async (req, res) => {
-  const { refreshToken } = req.body
+  const { refreshToken } = req.body;
 
-  await deleteRefreshToken(refreshToken)
+  const ok = await refreshTokenBelongsToUser(refreshToken, req.user.id);
+  if (!ok) {
+    res.status(400);
+    throw new Error("Invalid or expired refresh token");
+  }
 
-  res.json({ message: "Logged out" })
-})
+  await deleteRefreshToken(refreshToken);
 
-// LOGOUT ALL
+  res.json({ message: "Logged out" });
+});
+
 export const logoutAllDevices = asyncHandler(async (req, res) => {
-  await deleteAllUserSessions(req.user.id)
-  res.json({ message: "Logged out from all devices" })
-})
+  await deleteAllUserSessions(req.user.id);
+  res.json({ message: "Logged out from all devices" });
+});

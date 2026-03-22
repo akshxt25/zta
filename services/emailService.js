@@ -1,27 +1,26 @@
 import nodemailer from "nodemailer"
 
+const user = process.env.EMAIL_USER
+const pass = process.env.EMAIL_PASS
+
 const transporter = nodemailer.createTransport({
   service: "gmail",
   auth: {
-    user: "testappforme20@gmail.com",
-    pass: "svut ldec xsgj vvbd"
+    user,
+    pass
   }
 })
 
 export const sendOTPEmail = async (to, otp) => {
-  try {
-    await transporter.sendMail({
-      from: `"Zero Trust System" <${process.env.EMAIL_USER}>`,
-      to,
-      subject: "Your OTP Code",
-      html: `
+  await transporter.sendMail({
+    from: `"Zero Trust System" <${user}>`,
+    to,
+    subject: "Your OTP Code",
+    html: `
         <h2>Zero Trust Security</h2>
         <p>Your OTP is:</p>
         <h1>${otp}</h1>
         <p>This OTP is valid for 5 minutes.</p>
       `
-    })
-  } catch (err) {
-    console.error("Email error:", err.message)
-  }
+  })
 }

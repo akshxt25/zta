@@ -1,4 +1,4 @@
-import { LoginLog } from "../models/loginLog.js"
+import { LoginLog } from "../models/loginlog.js"
 
 const calculateRisk = async (context, user) => {
   let risk = 0

@@ -1,11 +1,10 @@
 import geoip from "geoip-lite"
 import { UAParser } from "ua-parser-js"
 import { generateDeviceFingerprint } from "../utils/deviceFingerprint.js"
+import { normalizeClientIp } from "../utils/ip.js"
 
 const collectContext = (req) => {
-  const ip =
-    req.headers["x-forwarded-for"]?.split(",")[0] ||
-    req.connection.remoteAddress
+  const ip = normalizeClientIp(req)
 
   const geo = geoip.lookup(ip)
 
@@ -14,7 +13,7 @@ const collectContext = (req) => {
   const browser = parser.getBrowser().name || "Unknown"
   const os = parser.getOS().name || "Unknown"
 
-  const device = generateDeviceFingerprint(req)
+  const device = generateDeviceFingerprint(req, ip)
 
   const hour = new Date().getHours()
 
