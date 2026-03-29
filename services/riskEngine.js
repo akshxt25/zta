@@ -28,7 +28,6 @@ const calculateRisk = async (context, user) => {
     reasons.push("Suspicious IP")
   }
 
-  // behavioral check
   const logs = await LoginLog.find({ userId: user._id }).limit(10)
 
   if (logs.length > 0) {

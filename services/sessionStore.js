@@ -11,7 +11,6 @@ export const verifyRefreshToken = async (token) => {
   return await redis.get(`refresh:${token}`)
 }
 
-/** Ensures the refresh token exists and belongs to the given user (logout safety). */
 export const refreshTokenBelongsToUser = async (token, expectedUserId) => {
   const userId = await redis.get(`refresh:${token}`)
   if (!userId) return false

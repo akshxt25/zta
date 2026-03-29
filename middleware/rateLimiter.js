@@ -1,6 +1,6 @@
 import rateLimit, { ipKeyGenerator } from "express-rate-limit"
 
-/** IPv6-safe key for rate limiting (see ERR_ERL_KEY_GEN_IPV6). */
+
 const clientKey = (req) => {
   const ip = req.ip || req.socket?.remoteAddress || "127.0.0.1"
   return ipKeyGenerator(typeof ip === "string" ? ip : String(ip))
