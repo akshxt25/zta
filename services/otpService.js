@@ -8,7 +8,7 @@ function hashOtp(otp) {
   return crypto.createHash("sha256").update(String(otp).trim(), "utf8").digest("hex")
 }
 
-export const generateOTP = async (userId, context) => {
+export const generateOTP = async (userId, context, { riskScore = null, reasons = [] } = {}) => {
   const otp = crypto.randomInt(100000, 999999).toString()
   const sessionId = crypto.randomUUID()
   const otpHash = hashOtp(otp)
@@ -17,6 +17,8 @@ export const generateOTP = async (userId, context) => {
     userId,
     otpHash,
     context,
+    riskScore,
+    reasons,
     attempts: 0
   }
 
@@ -61,7 +63,9 @@ export const verifyOTP = async (sessionId, inputOtp) => {
     return {
       valid: true,
       userId: record.userId,
-      context: record.context
+      context: record.context,
+      riskScore: record.riskScore ?? null,
+      reasons: record.reasons ?? []
     }
   }
 

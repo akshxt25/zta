@@ -1,11 +1,16 @@
 import "./config/loadEnv.js"
 import express from "express"
+import http from "http"
 import dns from "dns"
 import helmet from "helmet"
 import cors from "cors"
+import jwt from "jsonwebtoken"
+import { WebSocketServer } from "ws"
 
 import connectDB from "./config/db.js"
 import "./config/redis.js"
+import { JWT_SECRET } from "./config/jwt.js"
+import { addSocketForUser, removeSocket } from "./realtime/wsHub.js"
 
 import authRoutes from "./routes/authroutes.js"
 import adminRoutes from "./routes/adminroutes.js"
@@ -47,6 +52,38 @@ app.use(errorHandler)
 
 const PORT = process.env.PORT || 5000
 
-app.listen(PORT, () => {
+const server = http.createServer(app)
+
+const wss = new WebSocketServer({ server, path: "/ws" })
+
+wss.on("connection", (ws, req) => {
+  try {
+    const url = new URL(req.url, "http://localhost")
+    const token = url.searchParams.get("token")
+
+    if (!token) {
+      ws.close()
+      return
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET)
+    const userId = decoded?.id
+    const role = decoded?.role
+
+    addSocketForUser({ userId, role, ws })
+
+    ws.on("close", () => {
+      removeSocket(ws)
+    })
+  } catch {
+    try {
+      ws.close()
+    } catch {
+      // ignore
+    }
+  }
+})
+
+server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
 })

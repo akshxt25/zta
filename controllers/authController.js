@@ -9,7 +9,7 @@ import calculateRisk from "../services/riskEngine.js";
 import evaluatePolicy from "../services/policyEngine.js";
 
 import { generateOTP, verifyOTP } from "../services/otpService.js";
-import { sendOTPEmail } from "../services/emailService.js";
+import { sendOTPEmail, sendLoginNotificationEmail } from "../services/emailService.js";
 
 import {
   generateAccessToken,
@@ -25,6 +25,7 @@ import {
 } from "../services/sessionStore.js";
 
 import { asyncHandler } from "../utils/asyncHandler.js";
+import { broadcastToAdmins, broadcastToUser } from "../realtime/wsHub.js";
 
 const AUTH_FAILED = "Invalid email or password";
 
@@ -91,7 +92,10 @@ export const login = asyncHandler(async (req, res) => {
   }
 
   if (decision === "MFA_REQUIRED") {
-    const { otp, sessionId } = await generateOTP(user._id.toString(), context);
+    const { otp, sessionId } = await generateOTP(user._id.toString(), context, {
+      riskScore: score,
+      reasons
+    });
 
     await sendOTPEmail(user.email, otp);
 
@@ -118,6 +122,44 @@ export const login = asyncHandler(async (req, res) => {
 
   await storeRefreshToken(user._id.toString(), refreshToken);
 
+  await sendLoginNotificationEmail(user.email, context);
+
+  // Realtime event for user + admins (dashboard refresh / notifications).
+  broadcastToUser(user._id.toString(), {
+    type: "login_event",
+    payload: {
+      userId: user._id.toString(),
+      email: user.email,
+      source: "password",
+      decision,
+      riskScore: score,
+      reasons,
+      ip: context.ip,
+      location: context.location,
+      device: context.device,
+      deviceMeta: context.deviceMeta,
+      loginHour: context.loginHour,
+      timestamp: new Date().toISOString()
+    }
+  })
+  broadcastToAdmins({
+    type: "login_event",
+    payload: {
+      userId: user._id.toString(),
+      email: user.email,
+      source: "password",
+      decision,
+      riskScore: score,
+      reasons,
+      ip: context.ip,
+      location: context.location,
+      device: context.device,
+      deviceMeta: context.deviceMeta,
+      loginHour: context.loginHour,
+      timestamp: new Date().toISOString()
+    }
+  })
+
   res.json({ accessToken, refreshToken });
 });
 
@@ -134,6 +176,8 @@ export const verifyOtpController = asyncHandler(async (req, res) => {
   const user = await User.findById(result.userId);
 
   const context = result.context;
+  const riskScore = result.riskScore ?? null;
+  const reasons = result.reasons ?? [];
 
   const existingDevice = user.trustedDevices.find(
     (d) => d.deviceId === context.device,
@@ -154,6 +198,44 @@ export const verifyOtpController = asyncHandler(async (req, res) => {
   const refreshToken = generateRefreshToken(user);
 
   await storeRefreshToken(user._id.toString(), refreshToken);
+
+  // Realtime event for user + admins.
+  broadcastToUser(user._id.toString(), {
+    type: "login_event",
+    payload: {
+      userId: user._id.toString(),
+      email: user.email,
+      source: "otp",
+      decision: "MFA_REQUIRED",
+      riskScore,
+      reasons,
+      ip: context.ip,
+      location: context.location,
+      device: context.device,
+      deviceMeta: context.deviceMeta,
+      loginHour: context.loginHour,
+      timestamp: new Date().toISOString()
+    }
+  })
+  broadcastToAdmins({
+    type: "login_event",
+    payload: {
+      userId: user._id.toString(),
+      email: user.email,
+      source: "otp",
+      decision: "MFA_REQUIRED",
+      riskScore,
+      reasons,
+      ip: context.ip,
+      location: context.location,
+      device: context.device,
+      deviceMeta: context.deviceMeta,
+      loginHour: context.loginHour,
+      timestamp: new Date().toISOString()
+    }
+  })
+
+  await sendLoginNotificationEmail(user.email, context);
 
   res.json({ accessToken, refreshToken });
 });
@@ -193,6 +275,12 @@ export const logoutController = asyncHandler(async (req, res) => {
 
 export const logoutAllDevices = asyncHandler(async (req, res) => {
   await deleteAllUserSessions(req.user.id);
+
+  broadcastToUser(req.user.id, {
+    type: "force_logout",
+    payload: { reason: "logout_all_devices", timestamp: new Date().toISOString() }
+  })
+
   res.json({ message: "Logged out from all devices" });
 });
 
