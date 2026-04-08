@@ -10,7 +10,12 @@ import { WebSocketServer } from "ws"
 import connectDB from "./config/db.js"
 import "./config/redis.js"
 import { JWT_SECRET } from "./config/jwt.js"
-import { addSocketForUser, removeSocket } from "./realtime/wsHub.js"
+import {
+  addSocketForUser,
+  removeSocket,
+  broadcastToAll
+} from "./realtime/wsHub.js"
+import { deleteAllSessionsForAllUsers } from "./services/sessionStore.js"
 
 import authRoutes from "./routes/authroutes.js"
 import adminRoutes from "./routes/adminroutes.js"
@@ -87,3 +92,19 @@ wss.on("connection", (ws, req) => {
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`)
 })
+
+// Force logout every 30 minutes (refresh-token session eviction).
+// This keeps “demo” sessions from staying valid indefinitely.
+const AUTO_LOGOUT_MS = 30 * 60 * 1000
+
+setInterval(async () => {
+  try {
+    await deleteAllSessionsForAllUsers()
+    broadcastToAll({
+      type: "force_logout",
+      payload: { reason: "auto_logout_30m", timestamp: new Date().toISOString() }
+    })
+  } catch (err) {
+    console.error("Auto logout failed:", err?.message || err)
+  }
+}, AUTO_LOGOUT_MS).unref()

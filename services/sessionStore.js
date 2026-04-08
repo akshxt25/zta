@@ -36,3 +36,35 @@ export const deleteAllUserSessions = async (userId) => {
 
   await redis.del(`user_tokens:${userId}`)
 }
+
+function chunk(arr, size) {
+  const out = []
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size))
+  return out
+}
+
+// Logs out every user by deleting all refresh tokens in Redis.
+// Access tokens will still expire by themselves, but we also force WS logout.
+export const deleteAllSessionsForAllUsers = async () => {
+  const refreshKeys = []
+
+  for await (const userTokensKey of redis.scanIterator({
+    match: "user_tokens:*",
+    count: 200
+  })) {
+    const tokens = await redis.smembers(userTokensKey)
+    if (tokens?.length) {
+      for (const setToken of tokens) {
+        refreshKeys.push(`refresh:${setToken}`)
+      }
+    }
+    await redis.del(userTokensKey)
+  }
+
+  if (refreshKeys.length === 0) return
+
+  const chunks = chunk(refreshKeys, 500)
+  for (const c of chunks) {
+    await redis.del(...c)
+  }
+}

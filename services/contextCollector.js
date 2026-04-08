@@ -16,13 +16,16 @@ const collectContext = (req) => {
   const device = generateDeviceFingerprint(req, ip)
 
   const hour = new Date().getHours()
+  const minute = new Date().getMinutes()
+  const loginMinutes = hour * 60 + minute
 
   return {
     ip,
     location: geo ? geo.country : null,
     device,
     deviceMeta: `${browser}-${os}`,
-    loginHour: hour
+    loginHour: hour,
+    loginMinutes
   }
 }
 

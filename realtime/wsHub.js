@@ -54,3 +54,20 @@ export function broadcastToAdmins(message) {
   }
 }
 
+export function broadcastToAll(message) {
+  const payload = JSON.stringify(message)
+  const sent = new Set()
+
+  for (const set of socketsByUserId.values()) {
+    for (const ws of set) {
+      if (sent.has(ws)) continue
+      sent.add(ws)
+      try {
+        ws.send(payload)
+      } catch {
+        // Ignore send failures
+      }
+    }
+  }
+}
+
